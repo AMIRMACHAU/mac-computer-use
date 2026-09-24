@@ -1,0 +1,25 @@
+[project]
+name = "mac-computer-use"
+version = "0.1.0"
+description = "MCP server that gives your Claude eyes, a mouse and a keyboard on your Mac"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2,<3",
+    "pyautogui>=0.9.54",
+    "pillow>=10",
+    "pyobjc-framework-ApplicationServices>=10",
+    "pyobjc-framework-Cocoa>=10",
+]
+
+[project.scripts]
+mac-computer-use = "server:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["server", "executor"]
