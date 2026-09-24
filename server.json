@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.AMIRMACHAU/mac-computer-use",
+  "description": "Gives your Claude hands on your Mac, and refuses to use them wrongly. Elements are addressed by name through the macOS accessibility tree rather than by pixel, so a missing, ambiguous or changed target raises instead of clicking. Multi-step plans are resolved before any step runs.",
+  "repository": {
+    "url": "https://github.com/AMIRMACHAU/mac-computer-use",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "mac-computer-use",
+      "version": "0.1.0",
+      "transport": { "type": "stdio" }
+    }
+  ]
+}
