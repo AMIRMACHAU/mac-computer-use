@@ -149,8 +149,21 @@ it refuses and lists them), and then clicks by the safest route available:
 
 - the **accessibility action** of the element under those words (press, open) —
   no mouse and no focus, so it works with the app in the background;
-- otherwise a **real click, only where that window is visibly uncovered**, checked
-  against the window server's stacking order — never onto whatever is on top.
+- otherwise a **real click, only where macOS's own hit test says it reaches that
+  window** — never onto whatever is on top.
+
+Chromium and Electron apps hide their buttons from accessibility until something
+asks; `click_text` asks (once per process), so on web content it presses the real
+`AXButton` or link rather than a pixel:
+
+```
+click_text(app="Brave Browser", window="CU Test Page", text="Count me", exact=True,
+           expect="Clicks counted: 1")
+  → clicked 'Count me' via accessibility AXPress on AXButton 'Count me'
+    expected 'Clicks counted: 1': SEEN          (Claude in front the whole time)
+```
+
+Windows in another desktop Space cannot be captured — bring them into this one.
 
 ```
 click_text(app="Finder", text="Downloads", exact=True)

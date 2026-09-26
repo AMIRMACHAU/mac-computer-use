@@ -75,6 +75,25 @@ SEED: list[dict] = [
      "fact": "A window captured while it is still animating open has bounds that are "
              "stale a moment later, so every click computed from it is refused as "
              "'moved'. Wait for two equal bounds reads before capturing."},
+    {"key": "chromium-accessibility-is-lazy",
+     "tags": ["accessibility", "web", "electron", "click"],
+     "fact": "Chromium and Electron windows expose only anonymous AXGroups until an "
+             "assistive tool asks. Setting AXManualAccessibility (and "
+             "AXEnhancedUserInterface) on the app turns the real tree on — buttons and "
+             "links with AXPress — about 1.5s later, although both calls return errors. "
+             "click_text does this automatically, once per process."},
+    {"key": "overlays-fake-covering",
+     "tags": ["click", "window", "overlay"],
+     "fact": "Transparent full-screen overlay windows (e.g. Cua Driver's) sit on top of "
+             "everything in the window stacking order but let clicks through. Decide "
+             "whether a click reaches a window with the system-wide accessibility hit "
+             "test (AXUIElementCopyElementAtPosition on AXUIElementCreateSystemWide), "
+             "not by stacking order."},
+    {"key": "other-space-windows-uncapturable",
+     "tags": ["screenshot", "window", "spaces"],
+     "fact": "A window in another desktop Space (or a full-screen app's Space) is reported "
+             "off-screen and screencapture -l refuses it ('could not create image from "
+             "window'). Its title can also be stale. Bring it into the current Space first."},
     {"key": "shared-focus-hazard",
      "tags": ["input", "safety"],
      "fact": "Keyboard input goes to whatever has focus, which you share with the human at "

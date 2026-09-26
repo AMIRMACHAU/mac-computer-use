@@ -478,7 +478,8 @@ def click_text(app: str, text: str, window: str | None = None, exact: bool = Fal
     Finds exactly one occurrence (refuses and lists candidates if several — then
     pass exact=True, longer text, or occurrence=N). Performs the element's own
     accessibility action (press/open) where there is one, which works with the app
-    behind other windows; otherwise a real click, only if that spot is uncovered.
+    behind other windows; otherwise a real click, only if macOS's hit test says it
+    reaches this window.
     `expect`: text that should appear afterwards — polled, so success is verified.
     """
     if executor.DRY_RUN:
@@ -504,7 +505,7 @@ def click_in_window(app: str, x: int, y: int, button: str = "left", clicks: int 
     """Click (x, y) in the latest screenshot_app image of `app` — for targets with no text.
 
     Same safety as click_text: refused if the window moved or closed since that
-    screenshot, and a mouse click is only sent where the window is uncovered.
+    screenshot, and a mouse click is only sent where it would reach this window.
     """
     if executor.DRY_RUN:
         return f"dry-run: would click ({x},{y}) in the last {app} screenshot"

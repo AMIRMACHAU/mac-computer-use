@@ -25,8 +25,8 @@ This module fixes both without giving up the rules targeting.py keeps:
   behind other windows — which matters, because while the Claude desktop app runs
   a tool call macOS will not let any other app come to the front.
 - **Mouse only where it provably lands.** If nothing there accepts an
-  accessibility action, a real click is sent only when the window server says
-  that point of *this* window is uncovered; otherwise it refuses.
+  accessibility action, a real click is sent only when macOS's own hit test says
+  it would reach *this* window; otherwise it refuses.
 - **Refuse stale coordinates.** Coordinates are tied to a specific capture of a
   specific window; if the window moved or closed since, the click is refused.
 """
@@ -66,6 +66,7 @@ class Window:
     y: float
     w: float
     h: float
+    pid: int = 0      # owning process — two apps can share a name (two Brave instances)
 
     def bounds(self) -> tuple:
         return (round(self.x), round(self.y), round(self.w), round(self.h))
@@ -88,7 +89,8 @@ def app_windows(app: str) -> list[Window]:
         if b["Width"] < 50 or b["Height"] < 50:      # ignore slivers and helpers
             continue
         out.append(Window(int(w["kCGWindowNumber"]), owner, str(w.get("kCGWindowName") or ""),
-                          float(b["X"]), float(b["Y"]), float(b["Width"]), float(b["Height"])))
+                          float(b["X"]), float(b["Y"]), float(b["Width"]), float(b["Height"]),
+                          int(w.get("kCGWindowOwnerPID") or 0)))
     return out
 
 
@@ -115,7 +117,8 @@ def _window_now(win_id: int) -> Window | None:
             b = w["kCGWindowBounds"]
             return Window(win_id, str(w.get("kCGWindowOwnerName") or ""),
                           str(w.get("kCGWindowName") or ""),
-                          float(b["X"]), float(b["Y"]), float(b["Width"]), float(b["Height"]))
+                          float(b["X"]), float(b["Y"]), float(b["Width"]), float(b["Height"]),
+                          int(w.get("kCGWindowOwnerPID") or 0))
     return None
 
 
@@ -325,16 +328,31 @@ def ensure_front(app: str, timeout: float = 1.5) -> bool:
     return False
 
 
-def window_at(gx: float, gy: float) -> int | None:
-    """Id of the topmost normal window containing the point — what a click would hit."""
+def click_reaches(win: Window, gx: float, gy: float) -> bool:
+    """Would a real click at this point be delivered to `win`'s app?
+
+    Asks macOS's own hit test rather than reading the window stacking order,
+    because transparent overlays (screen recorders, other automation tools) sit
+    on top of everything and let clicks through: by stacking order the whole
+    screen looks covered. Then, among that app's own windows, `win` must be the
+    topmost one at the point.
+    """
+    from ApplicationServices import (AXUIElementCopyElementAtPosition,
+                                     AXUIElementCreateSystemWide, AXUIElementGetPid)
+    err, el = AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), gx, gy, None)
+    if err or el is None:
+        return False
+    _, pid = AXUIElementGetPid(el, None)
+    if not win.pid or pid != win.pid:
+        return False
     for w in CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID) or []:
-        if w.get("kCGWindowLayer", 0) != 0 or not w.get("kCGWindowAlpha", 1):
+        if w.get("kCGWindowLayer", 0) != 0 or int(w.get("kCGWindowOwnerPID") or 0) != pid:
             continue
-        b = w.get("kCGWindowBounds") or {}
-        if (b.get("X", 0) <= gx < b.get("X", 0) + b.get("Width", 0)
-                and b.get("Y", 0) <= gy < b.get("Y", 0) + b.get("Height", 0)):
-            return int(w["kCGWindowNumber"])
-    return None
+        bb = w.get("kCGWindowBounds") or {}
+        if (bb.get("X", 0) <= gx < bb.get("X", 0) + bb.get("Width", 0)
+                and bb.get("Y", 0) <= gy < bb.get("Y", 0) + bb.get("Height", 0)):
+            return int(w["kCGWindowNumber"]) == win.id
+    return False
 
 
 # Accessibility actions that stand in for a click, best first. A double click
@@ -355,30 +373,63 @@ def _ax_click(app: str, win: Window, gx: float, gy: float, button: str, clicks: 
     kAXErrorCannotComplete for an AXOpen that did navigate — so success is judged
     by the caller re-reading the window, not here.
     """
-    from ApplicationServices import AXUIElementCopyElementAtPosition, AXUIElementPerformAction
+    from ApplicationServices import (AXUIElementCopyElementAtPosition,
+                                     AXUIElementCreateApplication, AXUIElementPerformAction)
     from targeting import _actions, _app_element, _attr, _text_of
 
     wanted = _CLICK_ACTIONS.get((button, clicks))
     if not wanted:
         return None
-    root, _, _ = _app_element(app)
-    err, el = AXUIElementCopyElementAtPosition(root, gx, gy, None)
-    if err or el is None:
+    # Ask the process that owns *this* window, not the first app with this name.
+    root = AXUIElementCreateApplication(win.pid) if win.pid else _app_element(app)[0]
+
+    def actionable():
+        err, el = AXUIElementCopyElementAtPosition(root, gx, gy, None)
+        cur = None if err else el
+        for _ in range(6):                   # the text itself, then its cell/row/button
+            if cur is None or _attr(cur, "AXRole") in ("AXWindow", "AXApplication"):
+                return None
+            acts = _actions(cur)
+            for a in wanted:
+                if a in acts:
+                    return cur, a
+            cur = _attr(cur, "AXParent")
         return None
-    hit_role = _attr(el, "AXRole")
-    cur = el
-    for _ in range(6):                       # the text itself, then its cell/row/button
-        if cur is None or _attr(cur, "AXRole") in ("AXWindow", "AXApplication"):
-            break
-        acts = _actions(cur)
-        for a in wanted:
-            if a in acts:
-                AXUIElementPerformAction(cur, a)
-                return {"method": "accessibility", "action": a,
-                        "element": f"{_attr(cur, 'AXRole')} {_text_of(cur)[0]!r}".strip(),
-                        "hit": hit_role}
-        cur = _attr(cur, "AXParent")
-    return None
+
+    found = actionable()
+    woke = False
+    if found is None and _wake_web_accessibility(root, win.pid):
+        woke = True                          # Chromium builds its tree on request
+        deadline = time.monotonic() + 3.0
+        while found is None and time.monotonic() < deadline:
+            time.sleep(0.25)
+            found = actionable()
+    if found is None:
+        return None
+    el, a = found
+    AXUIElementPerformAction(el, a)
+    return {"method": "accessibility", "action": a, "woke_web_accessibility": woke,
+            "element": f"{_attr(el, 'AXRole')} {_text_of(el)[0]!r}".strip()}
+
+
+_woken: set[int] = set()
+
+
+def _wake_web_accessibility(root, pid: int) -> bool:
+    """Ask a Chromium/Electron app to build its accessibility tree. Once per process.
+
+    Chromium exposes only anonymous groups until an assistive tool asks for more;
+    AXManualAccessibility is the Electron/Chromium switch for exactly this, and
+    AXEnhancedUserInterface is what VoiceOver sets. Both return error codes even
+    when they work, so the caller re-probes rather than trusting them.
+    """
+    from ApplicationServices import AXUIElementSetAttributeValue
+    if not pid or pid in _woken:
+        return False
+    _woken.add(pid)
+    for attr in ("AXManualAccessibility", "AXEnhancedUserInterface"):
+        AXUIElementSetAttributeValue(root, attr, True)
+    return True
 
 
 def _click_global(app: str, win: Window, gx: float, gy: float,
@@ -386,9 +437,8 @@ def _click_global(app: str, win: Window, gx: float, gy: float,
     """Click a point inside a captured window, by the safest route available.
 
     1. Accessibility action on the element under the point — no focus needed.
-    2. A real mouse click, only if that point of *this* window is uncovered on
-       screen (checked against the window server's stacking order), so it cannot
-       land in whatever happens to be on top.
+    2. A real mouse click, only if macOS's own hit test says it reaches *this*
+       window, so it cannot land in whatever happens to be on top.
     Otherwise it refuses and says why.
     """
     import pyautogui
@@ -408,13 +458,12 @@ def _click_global(app: str, win: Window, gx: float, gy: float,
         return {**base, **ax, "frontmost": frontmost_app()}
 
     front = ensure_front(app)
-    top = window_at(gx, gy)
-    if top != win.id:
+    if not click_reaches(win, gx, gy):
         raise TargetError(
-            f"nothing under ({int(gx)},{int(gy)}) accepts an accessibility click, and that "
-            f"spot is covered by another window on screen (front app: {frontmost_app()!r}), "
-            "so a mouse click would land there instead. Make the target visible "
-            "(e.g. move the covering window), or use a browser tool for web pages.")
+            f"nothing under ({int(gx)},{int(gy)}) accepts an accessibility click, and a mouse "
+            f"click there would not reach {win.describe()} — another window is on top "
+            f"(front app: {frontmost_app()!r}). Make the target visible, or use a "
+            "browser tool for web pages.")
     pyautogui.click(gx, gy, clicks=clicks, interval=0.06, button=button)
     return {**base, "method": "mouse", "was_frontmost": front,
             "frontmost_after": frontmost_app()}

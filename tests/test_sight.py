@@ -89,11 +89,11 @@ def test_refuses_mouse_click_on_a_covered_spot(monkeypatch):
     monkeypatch.setattr(sight, "_window_now", lambda _id: W)
     monkeypatch.setattr(sight, "_ax_click", lambda *a: None)
     monkeypatch.setattr(sight, "ensure_front", lambda app: False)
-    monkeypatch.setattr(sight, "window_at", lambda x, y: 99)      # someone else's window
+    monkeypatch.setattr(sight, "click_reaches", lambda w, x, y: False)  # someone else on top
     monkeypatch.setattr(sight, "frontmost_app", lambda: "Claude")
     import pyautogui
     monkeypatch.setattr(pyautogui, "click", lambda *a, **k: pytest.fail("clicked a covered spot"))
-    with pytest.raises(TargetError, match="covered"):
+    with pytest.raises(TargetError, match="would not reach"):
         sight._click_global("Finder", W, 150, 150)
 
 
@@ -101,7 +101,7 @@ def test_mouse_click_allowed_where_window_is_uncovered(monkeypatch):
     monkeypatch.setattr(sight, "_window_now", lambda _id: W)
     monkeypatch.setattr(sight, "_ax_click", lambda *a: None)
     monkeypatch.setattr(sight, "ensure_front", lambda app: False)
-    monkeypatch.setattr(sight, "window_at", lambda x, y: W.id)
+    monkeypatch.setattr(sight, "click_reaches", lambda w, x, y: True)
     monkeypatch.setattr(sight, "frontmost_app", lambda: "Finder")
     clicked = []
     import pyautogui
