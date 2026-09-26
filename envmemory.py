@@ -58,6 +58,23 @@ SEED: list[dict] = [
              "Saves and UI updates are asynchronous; a fixed pause reports false mismatches "
              "on work that actually succeeded. Poll the ground truth until it matches or "
              "times out."},
+    {"key": "claude-app-holds-the-front",
+     "tags": ["focus", "screenshot", "click", "macos"],
+     "fact": "While the Claude desktop app is running a tool call, macOS will not let any "
+             "other app come to the front — open -a, activateWithOptions, osascript "
+             "activate and AXRaise all lose. A full-screen screenshot then shows Claude, and "
+             "a coordinate click lands in Claude. Use screenshot_app (captures one window "
+             "even when covered) and click_text (accessibility action, no focus needed)."},
+    {"key": "ax-action-return-codes-lie",
+     "tags": ["accessibility", "verification"],
+     "fact": "AXUIElementPerformAction can return an error and still work: Finder returns "
+             "kAXErrorCannotComplete (-25205) for an AXOpen on a sidebar item that did "
+             "navigate. Judge success by re-reading the window, not by the return code."},
+    {"key": "capture-after-window-settles",
+     "tags": ["screenshot", "window"],
+     "fact": "A window captured while it is still animating open has bounds that are "
+             "stale a moment later, so every click computed from it is refused as "
+             "'moved'. Wait for two equal bounds reads before capturing."},
     {"key": "shared-focus-hazard",
      "tags": ["input", "safety"],
      "fact": "Keyboard input goes to whatever has focus, which you share with the human at "

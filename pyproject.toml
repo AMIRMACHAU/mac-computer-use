@@ -13,6 +13,8 @@ dependencies = [
     "pillow>=10",
     "pyobjc-framework-ApplicationServices>=10",
     "pyobjc-framework-Cocoa>=10",
+    "pyobjc-framework-Quartz>=10",
+    "pyobjc-framework-Vision>=10",
 ]
 
 [project.urls]
@@ -35,4 +37,4 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-py-modules = ["server", "executor", "targeting", "envmemory", "plans"]
+py-modules = ["server", "executor", "targeting", "envmemory", "plans", "sight"]

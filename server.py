@@ -22,6 +22,7 @@ from mcp.server.mcpserver import Image, MCPServer
 import envmemory
 import executor
 import plans
+import sight
 import targeting
 
 executor.DRY_RUN = os.getenv("DRY_RUN", "").strip().lower() in ("1", "true", "yes", "on")
@@ -41,6 +42,14 @@ mcp = MCPServer(
         "they refuse instead of acting. Coordinates are a guess, and a wrong guess still "
         "clicks. Fall back to screenshot + click only for canvases and custom-drawn UI "
         "with no accessibility tree.\n\n"
+        "3. To look at or click one app, use screenshot_app / click_text, not screenshot / "
+        "click. The full-screen screenshot shows whatever is in front — from the Claude "
+        "app that is usually Claude itself, and macOS will not let another app come to "
+        "the front while a tool call runs. screenshot_app captures that app's window even "
+        "when it is covered; click_text finds the words in it and clicks them without "
+        "needing focus, or refuses if it cannot prove where the click would land. Use it "
+        "for web views (Electron, Tauri, Chromium apps), whose controls describe_ui "
+        "cannot see.\n\n"
         "The human shares this screen and keyboard. If something lands unexpectedly, "
         "stop and say so rather than continuing to type. When you learn a durable fact "
         "about this machine, save it with remember_environment."
@@ -412,6 +421,109 @@ def run_plan(steps: list[dict], require_ready: bool = True) -> str:
     if r.get("remaining"):
         out.append("  not attempted: " + "; ".join(r["remaining"]))
     return "\n".join(out)
+
+
+# ------------------------------------------------ one app's window, by sight
+
+def _png(img) -> Image:
+    import io
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return Image(data=buf.getvalue(), format="png")
+
+
+@mcp.tool()
+def screenshot_app(app: str, window: str | None = None) -> Image:
+    """Capture ONE app's window — correct even when other windows cover it.
+
+    Use this instead of screenshot whenever you mean a particular app: a
+    full-screen capture shows whatever is in front, which from the Claude app is
+    usually Claude. `window` is a title substring when the app has several.
+    Coordinates in the returned image are what click_in_window takes.
+    """
+    return _png(sight.capture(app, window).returned)
+
+
+@mcp.tool()
+def find_text(app: str, text: str, window: str | None = None, exact: bool = False) -> str:
+    """Where `text` is visible in an app's window, read by macOS text recognition.
+
+    Read-only. Lists every match with its position in the screenshot_app image, or
+    the text that IS visible when nothing matches — so you can pick exact wording
+    for click_text instead of guessing.
+    """
+    try:
+        cap = sight.capture(app, window)
+        lines = sight.read_text(cap)
+    except targeting.TargetError as e:
+        return f"REFUSED: {type(e).__name__}: {e}"
+    hits = sight.match_lines(lines, text, exact, cap.image.size)
+    if not hits:
+        return (f"no match for {text!r} in {cap.window.describe()}. Visible text: "
+                f"{[l for l, *_ in lines][:40]}")
+    out = [f"{len(hits)} match(es) in {cap.window.describe()}:"]
+    for i, h in enumerate(hits, 1):
+        cx, cy = h.center()
+        out.append(f"  #{i} {h.text!r} at ({int(cx / cap.returned_scale)},"
+                   f"{int(cy / cap.returned_scale)}) conf={h.conf:.2f}")
+    return "\n".join(out)
+
+
+@mcp.tool()
+def click_text(app: str, text: str, window: str | None = None, exact: bool = False,
+               occurrence: int | None = None, button: str = "left", clicks: int = 1,
+               expect: str | None = None) -> str:
+    """Click the visible text `text` in an app's window — no coordinates, no focus needed.
+
+    Finds exactly one occurrence (refuses and lists candidates if several — then
+    pass exact=True, longer text, or occurrence=N). Performs the element's own
+    accessibility action (press/open) where there is one, which works with the app
+    behind other windows; otherwise a real click, only if that spot is uncovered.
+    `expect`: text that should appear afterwards — polled, so success is verified.
+    """
+    if executor.DRY_RUN:
+        try:
+            cap, hit = sight.find_text(app, text, window, exact, occurrence)
+            return f"dry-run: would click {hit.text!r} in {cap.window.describe()}"
+        except targeting.TargetError as e:
+            return f"REFUSED: {type(e).__name__}: {e}"
+    try:
+        r = sight.click_text(app, text, window, exact, occurrence, button, clicks, expect)
+    except targeting.TargetError as e:
+        return f"REFUSED: {type(e).__name__}: {e}"
+    how = (f"accessibility {r['action']} on {r['element']}" if r["method"] == "accessibility"
+           else f"mouse click (app was frontmost: {r['was_frontmost']})")
+    out = f"clicked {r['target_text']!r} via {how} at {r['at_points']} in {r['window']}"
+    if expect:
+        out += f"\n  expected {expect!r}: {'SEEN' if r['expect_seen'] else 'NOT seen — check with screenshot_app'}"
+    return out
+
+
+@mcp.tool()
+def click_in_window(app: str, x: int, y: int, button: str = "left", clicks: int = 1) -> str:
+    """Click (x, y) in the latest screenshot_app image of `app` — for targets with no text.
+
+    Same safety as click_text: refused if the window moved or closed since that
+    screenshot, and a mouse click is only sent where the window is uncovered.
+    """
+    if executor.DRY_RUN:
+        return f"dry-run: would click ({x},{y}) in the last {app} screenshot"
+    try:
+        r = sight.click_in_window(app, x, y, button, clicks)
+    except targeting.TargetError as e:
+        return f"REFUSED: {type(e).__name__}: {e}"
+    how = r["method"] + (f" {r['action']} on {r['element']}" if r["method"] == "accessibility" else "")
+    return f"clicked via {how} at {r['at_points']} in {r['window']}"
+
+
+@mcp.tool()
+def wait_for_text(app: str, text: str, window: str | None = None, timeout: float = 8.0) -> str:
+    """Wait until `text` is visible in an app's window (polls; never a fixed sleep)."""
+    try:
+        seen = sight.wait_for_text(app, text, window, timeout=timeout)
+    except targeting.TargetError as e:
+        return f"REFUSED: {type(e).__name__}: {e}"
+    return f"{'SEEN' if seen else 'NOT seen'}: {text!r} in {app}"
 
 
 def main():

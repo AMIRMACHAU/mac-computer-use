@@ -131,6 +131,35 @@ a programmatic write — web content usually does — it focuses that element,
 focus went somewhere else it raises and sends nothing, which is the difference
 between a fallback and a hazard.
 
+## Seeing and clicking one app — even behind other windows
+
+Two things broke every time an agent drove a web-view app (Electron, Tauri,
+anything built on Chromium) from the Claude desktop app:
+
+1. **The screenshot was of the wrong app.** A full-screen capture shows whatever
+   is on top, and while Claude runs a tool call macOS will not let any other app
+   come to the front. The "screenshot of the app" was a screenshot of Claude.
+2. **Navigation was a guess.** Web views expose almost nothing to the
+   accessibility tree, so the only option was a pixel from that wrong picture.
+
+`screenshot_app` captures **one window** straight from the window server, so it
+is right however many windows cover it. `click_text` reads that window with
+macOS's own text recognition, finds the words you name (exactly one match, or
+it refuses and lists them), and then clicks by the safest route available:
+
+- the **accessibility action** of the element under those words (press, open) —
+  no mouse and no focus, so it works with the app in the background;
+- otherwise a **real click, only where that window is visibly uncovered**, checked
+  against the window server's stacking order — never onto whatever is on top.
+
+```
+click_text(app="Finder", text="Downloads", exact=True)
+  → clicked 'Downloads' via accessibility AXOpen on AXCell at (283,345)
+```
+
+Coordinates from `screenshot_app` belong to that capture: if the window moves or
+closes afterwards, `click_in_window` refuses instead of clicking stale pixels.
+
 ## Environment memory — don't relearn the same lesson
 
 Every machine has facts that are invisible in code and expensive to discover. On
@@ -197,6 +226,11 @@ enough. `run_plan` aborts before step one if anything is **blocked**.
 | `press_menu(app,"Format > Font > Bold")` | Follow a nested menu path. |
 | `open_app(app)` | Activate, launching first if needed; waits for a real window. |
 | `focused_element(app)` | What has keyboard focus — check before blind typing. |
+| `screenshot_app(app,window)` | One app's window, even when covered. Use instead of `screenshot`. |
+| `find_text(app,text)` | Where text is visible in that window (read-only). |
+| `click_text(app,text,exact,occurrence,expect)` | Click visible text — no coordinates, no focus needed. |
+| `click_in_window(app,x,y)` | Click a point in the last `screenshot_app` image; refuses if stale. |
+| `wait_for_text(app,text,timeout)` | Poll until text appears. |
 | `recall_environment(query)` | What this machine already taught us. Call first. |
 | `remember_environment(key,fact,tags)` | Record a durable machine fact. |
 | `check_plan(steps)` | Resolve a whole multi-step task **without performing any of it**. |
