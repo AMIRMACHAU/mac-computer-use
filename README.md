@@ -205,6 +205,22 @@ enough. `run_plan` aborts before step one if anything is **blocked**.
 Retina scaling is handled inside; screenshots are downscaled to a 1280px long
 edge and coordinates map back to real points automatically.
 
+## Tests
+
+```bash
+pip install -e ".[dev]"
+pytest              # logic only — no screen needed, ~0.3s
+pytest -m gui       # also drives a real app; skips if Accessibility is not granted
+```
+
+The logic tests stub element resolution, so the suite runs anywhere and touches
+nothing. The `gui` ones need a real application and are opt-in.
+
+They are written against bugs that actually shipped, not for coverage. The
+packaging tests exist because `py-modules` once listed only the two files the
+project started with: the wheel built fine, uploaded fine, and was missing every
+module the server imports. Reintroduce that mistake and the suite fails.
+
 ## Also in this repo
 
 `run.py` is the *other* way to drive the same executor: a standalone loop

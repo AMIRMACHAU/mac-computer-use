@@ -22,6 +22,14 @@ Repository = "https://github.com/AMIRMACHAU/mac-computer-use"
 [project.scripts]
 mac-computer-use = "server:main"
 
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["gui: needs a real app on screen and Accessibility permission"]
+addopts = "-m 'not gui' -q"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
