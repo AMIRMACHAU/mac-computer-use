@@ -497,6 +497,9 @@ def click_text(app: str, text: str, window: str | None = None, exact: bool = Fal
     out = f"clicked {r['target_text']!r} via {how} at {r['at_points']} in {r['window']}"
     if expect:
         out += f"\n  expected {expect!r}: {'SEEN' if r['expect_seen'] else 'NOT seen — check with screenshot_app'}"
+    elif r["method"] == "mouse":
+        out += ("\n  (a mouse click can be swallowed — e.g. mid-activation — without an error; "
+                "pass expect=, or look with screenshot_app, before assuming it worked)")
     return out
 
 

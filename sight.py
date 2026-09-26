@@ -309,20 +309,39 @@ def frontmost_app() -> str:
     return NSWorkspace.sharedWorkspace().frontmostApplication().localizedName() or "?"
 
 
-def ensure_front(app: str, timeout: float = 1.5) -> bool:
+def _front_pid() -> int:
+    return int(NSWorkspace.sharedWorkspace().frontmostApplication().processIdentifier())
+
+
+def ensure_front(app: str, timeout: float = 1.5, pid: int = 0) -> bool:
     """Try to bring `app` forward; return whether it really is frontmost.
 
     Returns rather than raises: macOS activation is cooperative, and while the
     Claude desktop app is running a tool call it refuses to yield the front to
     anyone (open -a, activateWithOptions, osascript and AXRaise all lose). The
     caller decides what is still safe to do without focus.
+
+    With `pid`, that exact process is activated and checked — `open -a` goes by
+    name, and with two instances of one app it raises whichever LaunchServices
+    picks, which may be the human's own window rather than the target.
     """
-    if frontmost_app().lower() == app.lower():
-        return True
-    subprocess.run(["/usr/bin/open", "-a", app], capture_output=True)
+    if pid:
+        from AppKit import NSApplicationActivateIgnoringOtherApps, NSRunningApplication
+        if _front_pid() == pid:
+            return True
+        ra = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+        if ra is None:
+            return False
+        ra.activateWithOptions_(NSApplicationActivateIgnoringOtherApps)
+        is_front = lambda: _front_pid() == pid
+    else:
+        if frontmost_app().lower() == app.lower():
+            return True
+        subprocess.run(["/usr/bin/open", "-a", app], capture_output=True)
+        is_front = lambda: frontmost_app().lower() == app.lower()
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        if frontmost_app().lower() == app.lower():
+        if is_front():
             return True
         time.sleep(0.1)
     return False
@@ -364,7 +383,46 @@ _CLICK_ACTIONS = {
 }
 
 
-def _ax_click(app: str, win: Window, gx: float, gy: float, button: str, clicks: int) -> dict | None:
+def _frame(el) -> tuple[float, float, float, float] | None:
+    """(x0, y0, x1, y1) of an element in global points, or None if it has no frame."""
+    from ApplicationServices import AXValueGetValue, kAXValueCGPointType, kAXValueCGSizeType
+    from targeting import _attr
+    pos, size = _attr(el, "AXPosition"), _attr(el, "AXSize")
+    if pos is None or size is None:
+        return None
+    ok1, p = AXValueGetValue(pos, kAXValueCGPointType, None)
+    ok2, z = AXValueGetValue(size, kAXValueCGSizeType, None)
+    if not (ok1 and ok2):
+        return None
+    return (p.x, p.y, p.x + z.width, p.y + z.height)
+
+
+MAX_PRESS_AREA_RATIO = 8      # an element this many times bigger than the target is not "it"
+
+
+def fits_target(frame, box, label: str, text: str | None) -> bool:
+    """Is pressing this element the same as clicking the target?
+
+    AXPress acts on the element as a whole — for web content, a click at its
+    centre. That is the target when the element *is* the text (its label says so)
+    or tightly wraps it. A canvas, a card or a page that merely contains the text
+    is not: pressing it clicks somewhere else and still reports success.
+    """
+    if text and label and _norm(text) in _norm(label):
+        return True
+    if frame is None:
+        return False
+    x0, y0, x1, y1 = frame
+    bx0, by0, bx1, by1 = box
+    cx, cy = (bx0 + bx1) / 2, (by0 + by1) / 2
+    if not (x0 <= cx <= x1 and y0 <= cy <= y1):
+        return False
+    area = max(1.0, (x1 - x0) * (y1 - y0))
+    return area <= MAX_PRESS_AREA_RATIO * max(1.0, (bx1 - bx0) * (by1 - by0))
+
+
+def _ax_click(app: str, win: Window, gx: float, gy: float, button: str, clicks: int,
+              box: tuple | None = None, text: str | None = None) -> dict | None:
     """Act on the element under the point through accessibility — no mouse, no focus.
 
     Works with the app behind other windows. Returns None when nothing under the
@@ -382,6 +440,7 @@ def _ax_click(app: str, win: Window, gx: float, gy: float, button: str, clicks: 
         return None
     # Ask the process that owns *this* window, not the first app with this name.
     root = AXUIElementCreateApplication(win.pid) if win.pid else _app_element(app)[0]
+    box = box or (gx - 12, gy - 12, gx + 12, gy + 12)     # a bare point: a finger-sized target
 
     def actionable():
         err, el = AXUIElementCopyElementAtPosition(root, gx, gy, None)
@@ -392,7 +451,9 @@ def _ax_click(app: str, win: Window, gx: float, gy: float, button: str, clicks: 
             acts = _actions(cur)
             for a in wanted:
                 if a in acts:
-                    return cur, a
+                    # Ancestors only get bigger, so the first press-able one decides.
+                    ok = fits_target(_frame(cur), box, _text_of(cur)[0], text)
+                    return (cur, a) if ok else "too-big"
             cur = _attr(cur, "AXParent")
         return None
 
@@ -404,7 +465,7 @@ def _ax_click(app: str, win: Window, gx: float, gy: float, button: str, clicks: 
         while found is None and time.monotonic() < deadline:
             time.sleep(0.25)
             found = actionable()
-    if found is None:
+    if found is None or found == "too-big":
         return None
     el, a = found
     AXUIElementPerformAction(el, a)
@@ -433,7 +494,8 @@ def _wake_web_accessibility(root, pid: int) -> bool:
 
 
 def _click_global(app: str, win: Window, gx: float, gy: float,
-                  button: str = "left", clicks: int = 1) -> dict:
+                  button: str = "left", clicks: int = 1,
+                  box: tuple | None = None, text: str | None = None) -> dict:
     """Click a point inside a captured window, by the safest route available.
 
     1. Accessibility action on the element under the point — no focus needed.
@@ -453,11 +515,11 @@ def _click_global(app: str, win: Window, gx: float, gy: float,
         raise TargetError(f"({int(gx)},{int(gy)}) is outside {win.describe()} — refusing.")
     base = {"at_points": (round(gx), round(gy)), "window": win.describe()}
 
-    ax = _ax_click(app, win, gx, gy, button, clicks)
+    ax = _ax_click(app, win, gx, gy, button, clicks, box, text)
     if ax:
         return {**base, **ax, "frontmost": frontmost_app()}
 
-    front = ensure_front(app)
+    front = ensure_front(app, pid=win.pid)
     if not click_reaches(win, gx, gy):
         raise TargetError(
             f"nothing under ({int(gx)},{int(gy)}) accepts an accessibility click, and a mouse "
@@ -480,7 +542,8 @@ def click_text(app: str, text: str, window: str | None = None, exact: bool = Fal
     cap, hit = find_text(app, text, window, exact, occurrence)
     fx, fy = hit.center()
     gx, gy = cap.full_to_global(fx, fy)
-    result = _click_global(app, cap.window, gx, gy, button, clicks)
+    gbox = (*cap.full_to_global(hit.x0, hit.y0), *cap.full_to_global(hit.x1, hit.y1))
+    result = _click_global(app, cap.window, gx, gy, button, clicks, gbox, text)
     result["target_text"] = hit.text
     result["confidence"] = round(hit.conf, 2)
     if expect:

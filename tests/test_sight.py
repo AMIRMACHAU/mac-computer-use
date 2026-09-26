@@ -88,7 +88,7 @@ def test_refuses_mouse_click_on_a_covered_spot(monkeypatch):
     # The failure this module exists for: Claude's window is on top of the target.
     monkeypatch.setattr(sight, "_window_now", lambda _id: W)
     monkeypatch.setattr(sight, "_ax_click", lambda *a: None)
-    monkeypatch.setattr(sight, "ensure_front", lambda app: False)
+    monkeypatch.setattr(sight, "ensure_front", lambda app, **k: False)
     monkeypatch.setattr(sight, "click_reaches", lambda w, x, y: False)  # someone else on top
     monkeypatch.setattr(sight, "frontmost_app", lambda: "Claude")
     import pyautogui
@@ -100,7 +100,7 @@ def test_refuses_mouse_click_on_a_covered_spot(monkeypatch):
 def test_mouse_click_allowed_where_window_is_uncovered(monkeypatch):
     monkeypatch.setattr(sight, "_window_now", lambda _id: W)
     monkeypatch.setattr(sight, "_ax_click", lambda *a: None)
-    monkeypatch.setattr(sight, "ensure_front", lambda app: False)
+    monkeypatch.setattr(sight, "ensure_front", lambda app, **k: False)
     monkeypatch.setattr(sight, "click_reaches", lambda w, x, y: True)
     monkeypatch.setattr(sight, "frontmost_app", lambda: "Finder")
     clicked = []
@@ -129,3 +129,26 @@ def test_captures_a_window_that_is_not_in_front():
     cap = sight.capture("Finder")
     assert cap.image.width == pytest.approx(cap.window.w * cap.px_per_pt)
     assert sight.read_text(cap), "a Finder window always shows some text"
+
+
+# ------------------------------------------- is pressing the element the same click?
+
+TEXT = (100, 100, 180, 120)                       # "Paint red", 80x20 points
+
+
+def test_element_labelled_with_the_text_fits_whatever_its_size():
+    assert sight.fits_target((0, 0, 900, 900), TEXT, "Paint red", "paint red")
+
+
+def test_tight_button_around_the_text_fits():
+    assert sight.fits_target((90, 95, 190, 125), TEXT, "", "Paint red")
+
+
+def test_canvas_containing_the_text_does_not_fit():
+    # The bug: AXPress on a 600x220 canvas clicks its centre, not the words, and
+    # still reports success. It must fall through to a real click instead.
+    assert not sight.fits_target((60, 60, 660, 280), TEXT, "", "Paint red")
+
+
+def test_element_not_under_the_text_does_not_fit():
+    assert not sight.fits_target((300, 300, 340, 320), TEXT, "", "Paint red")

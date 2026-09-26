@@ -94,6 +94,13 @@ SEED: list[dict] = [
      "fact": "A window in another desktop Space (or a full-screen app's Space) is reported "
              "off-screen and screencapture -l refuses it ('could not create image from "
              "window'). Its title can also be stale. Bring it into the current Space first."},
+    {"key": "axpress-on-a-container-misses",
+     "tags": ["accessibility", "web", "click", "canvas"],
+     "fact": "AXPress acts on the whole element — on web content, a click at its centre. "
+             "Chromium marks a clickable <canvas> (or card) as press-able, so pressing it "
+             "to hit text drawn inside clicks the middle instead and still reports success. "
+             "Only press an element labelled with the target text or tightly wrapping it; "
+             "otherwise use a real click and verify with expect."},
     {"key": "shared-focus-hazard",
      "tags": ["input", "safety"],
      "fact": "Keyboard input goes to whatever has focus, which you share with the human at "
